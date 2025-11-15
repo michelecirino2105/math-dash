@@ -1,0 +1,99 @@
+function pickQuestionFromCandidate(candidate, desiredDiff, usedGlobal, usedAtHurdle) {
+  function avail(filterFn) {
+    return candidate.filter((q) => {
+      const id = q.id || `${q.text}|${q.correctIndex}`;
+      return !usedGlobal.has(id) && !usedAtHurdle.has(id) && filterFn(q);
+    });
+  }
+
+  let pool = avail((q) => q.difficulty === desiredDiff);
+  if (!pool.length) pool = avail(() => true);
+  if (!pool.length) return null; // no unused questions left
+  return randChoice(pool);
+}
+
+function buildQuestionsByPlayer(config) {
+  const players = config.players;
+  const perPlayer = config.numQuestions;
+  const topic = config.topic;
+  const grade = config.gradeLevel;
+  const source = config.source;
+
+  const questionsByPlayer = Array.from({ length: players }, () =>
+    new Array(perPlayer)
+  );
+
+  const usedGlobal = new Set(); // ensures NO repetition in a game (any player)
+
+  // Purely generated mode: unlimited, no repeats via usedGlobal
+  if (source === "Generated") {
+    for (let h = 0; h < perPlayer; h++) {
+      const diff = difficultyForIndex(h, perPlayer, config.startDifficulty);
+      for (let p = 0; p < players; p++) {
+        let q;
+        let attempts = 0;
+        do {
+          q = generateQuestion(topic, diff, grade);
+          attempts++;
+        } while (
+          usedGlobal.has(q.id || `${q.text}|${q.correctIndex}`) &&
+          attempts < 10
+        );
+        const id = q.id || `${q.text}|${q.correctIndex}`;
+        usedGlobal.add(id);
+        questionsByPlayer[p][h] = q;
+      }
+    }
+    return questionsByPlayer;
+  }
+
+  // GCSE / PSAT / External with fallback to Generated when we run out
+  let candidate;
+  if (source === "External") {
+    candidate = externalQuestions.slice();
+  } else {
+    candidate = collectQuestionsFromBank(source, topic, grade);
+  }
+
+  const useGeneratorAsFallback =
+    source === "Generated" ||
+    candidate.length === 0 ||
+    config.gradeLevel <= 5;
+
+  for (let h = 0; h < perPlayer; h++) {
+    const diff = difficultyForIndex(h, perPlayer, config.startDifficulty);
+    const usedAtHurdle = new Set(); // prevent players from sharing a question at same hurdle
+
+    for (let p = 0; p < players; p++) {
+      let q = null;
+
+      if (candidate.length > 0) {
+        q = pickQuestionFromCandidate(
+          candidate,
+          diff,
+          usedGlobal,
+          usedAtHurdle
+        );
+      }
+
+      // If we ran out of unique bank questions, fall back to generated ones
+      if (!q || useGeneratorAsFallback) {
+        let attempts = 0;
+        do {
+          q = generateQuestion(topic, diff, grade);
+          attempts++;
+        } while (
+          usedGlobal.has(q.id || `${q.text}|${q.correctIndex}`) &&
+          attempts < 10
+        );
+      }
+
+      const id = q.id || `${q.text}|${q.correctIndex}`;
+      usedGlobal.add(id);
+      usedAtHurdle.add(id);
+      questionsByPlayer[p][h] = q;
+    }
+  }
+
+  return questionsByPlayer;
+}
